@@ -6,6 +6,7 @@ from app.services.auth import verify_api_key
 from app.services.rate_limiter import check_rate_limit
 from app.services.database import get_db
 from app.services.logger import log_request
+from app.services.pii_detector import anonymize_text
 
 router = APIRouter()
 
@@ -20,6 +21,30 @@ async def chat(
     request.user_id = user_info["user_id"]
     request.department = user_info["department"]
 
+    # Scan prompt for PII
+    clean_prompt, pii_found, entities = anonymize_text(request.prompt)
+
+    if pii_found:
+        log_request(
+            db=db,
+            user_id=request.user_id,
+            department=request.department,
+            model=request.model,
+            prompt=request.prompt,
+            response=None,
+            flagged=True,
+            reason=f"PII detected: {entities}"
+        )
+        return PromptResponse(
+            request_id="blocked",
+            status="blocked",
+            response=None,
+            flagged=True,
+            reason=f"PII detected and removed: {entities}"
+        )
+
+    # No PII found, proceed normally
+    request.prompt = clean_prompt
     response = await proxy_to_llm(request)
 
     log_request(
@@ -29,8 +54,8 @@ async def chat(
         model=request.model,
         prompt=request.prompt,
         response=response.response,
-        flagged=response.flagged,
-        reason=response.reason
+        flagged=False,
+        reason=None
     )
 
     return response
