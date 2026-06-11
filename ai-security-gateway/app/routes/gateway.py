@@ -21,41 +21,30 @@ async def chat(
     request.user_id = user_info["user_id"]
     request.department = user_info["department"]
 
-    # Scan prompt for PII
+    # Anonymize PII in prompt
     clean_prompt, pii_found, entities = anonymize_text(request.prompt)
 
-    if pii_found:
-        log_request(
-            db=db,
-            user_id=request.user_id,
-            department=request.department,
-            model=request.model,
-            prompt=request.prompt,
-            response=None,
-            flagged=True,
-            reason=f"PII detected: {entities}"
-        )
-        return PromptResponse(
-            request_id="blocked",
-            status="blocked",
-            response=None,
-            flagged=True,
-            reason=f"PII detected and removed: {entities}"
-        )
-
-    # No PII found, proceed normally
+    # Replace prompt with anonymized version
+    original_prompt = request.prompt
     request.prompt = clean_prompt
+
+    # Send anonymized prompt to LLM
     response = await proxy_to_llm(request)
 
+    # Log with original prompt and flag if PII was found
     log_request(
         db=db,
         user_id=request.user_id,
         department=request.department,
         model=request.model,
-        prompt=request.prompt,
+        prompt=original_prompt,
         response=response.response,
-        flagged=False,
-        reason=None
+        flagged=pii_found,
+        reason=f"PII anonymized: {entities}" if pii_found else None
     )
+
+    if pii_found:
+        response.flagged = True
+        response.reason = f"PII detected and anonymized: {entities}"
 
     return response
