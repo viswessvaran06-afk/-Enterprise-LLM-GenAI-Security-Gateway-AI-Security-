@@ -8,6 +8,7 @@ from app.services.database import get_db
 from app.services.logger import log_request
 from app.services.pii_detector import anonymize_text
 from app.services.injection_detector import detect_injection
+from app.services.content_filter import filter_response
 
 router = APIRouter()
 
@@ -40,7 +41,7 @@ async def chat(
             status="blocked",
             response=None,
             flagged=True,
-            reason=f"Prompt injection attack detected and blocked"
+            reason="Prompt injection attack detected and blocked"
         )
 
     # Anonymize PII in prompt
@@ -51,6 +52,27 @@ async def chat(
     # Send anonymized prompt to LLM
     response = await proxy_to_llm(request)
 
+    # Filter response for unsafe content
+    safe_response, is_unsafe, unsafe_pattern = filter_response(response.response)
+    if is_unsafe:
+        log_request(
+            db=db,
+            user_id=request.user_id,
+            department=request.department,
+            model=request.model,
+            prompt=original_prompt,
+            response=None,
+            flagged=True,
+            reason=f"Unsafe response blocked: {unsafe_pattern}"
+        )
+        return PromptResponse(
+            request_id="blocked",
+            status="blocked",
+            response=None,
+            flagged=True,
+            reason=f"Response violated corporate policy and was blocked"
+        )
+
     # Log request
     log_request(
         db=db,
@@ -58,7 +80,7 @@ async def chat(
         department=request.department,
         model=request.model,
         prompt=original_prompt,
-        response=response.response,
+        response=safe_response,
         flagged=pii_found,
         reason=f"PII anonymized: {entities}" if pii_found else None
     )
