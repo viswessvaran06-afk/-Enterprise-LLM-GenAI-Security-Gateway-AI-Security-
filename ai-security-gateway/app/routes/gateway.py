@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.models.prompt_model import PromptRequest, PromptResponse
 from app.services.llm_proxy import proxy_to_llm
-from app.services.auth import verify_api_key
+from app.services.auth import verify_api_key, check_model_access
 from app.services.rate_limiter import check_rate_limit
 from app.services.database import get_db
 from app.services.logger import log_request
@@ -22,6 +22,9 @@ async def chat(
 
     request.user_id = user_info["user_id"]
     request.department = user_info["department"]
+
+    # Check RBAC - model access
+    check_model_access(user_info, request.model)
 
     # Check for prompt injection
     is_injection, pattern = detect_injection(request.prompt)
@@ -70,7 +73,7 @@ async def chat(
             status="blocked",
             response=None,
             flagged=True,
-            reason=f"Response violated corporate policy and was blocked"
+            reason="Response violated corporate policy and was blocked"
         )
 
     # Log request
